@@ -1,3 +1,4 @@
+const WATERMARK_URL = '/watermark.png'; // fajl iz public/
 import { useEffect, useMemo, useState } from 'react'
 import { db, storage, auth } from '../../firebase'
 import {
