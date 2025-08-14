@@ -4,7 +4,7 @@ export async function applyWatermark(file: File, logoUrl: string, opacity = 0.9)
   const logoImg = await loadImage(logoUrl); // mora biti dostupan na istom domenu (npr. /watermark.png)
 
   // (opciono) smanji ogromne fotke (radi veličine fajla)
-  const MAX_W = 2800;
+  const MAX_W = 1600;
   const scale = baseImg.width > MAX_W ? MAX_W / baseImg.width : 1;
   const W = Math.round(baseImg.width * scale);
   const H = Math.round(baseImg.height * scale);
@@ -33,7 +33,7 @@ export async function applyWatermark(file: File, logoUrl: string, opacity = 0.9)
   ctx.globalAlpha = 1;
 
   return await new Promise<Blob>((resolve) =>
-    canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.92)
+    canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.85)
   );
 }
 
