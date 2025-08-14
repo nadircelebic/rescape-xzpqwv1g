@@ -1,59 +1,55 @@
 // src/utils/watermark.ts
-export async function addWatermark(file: File, logoUrl: string): Promise<Blob> {
-  // učitaj originalnu sliku
-  const img = await loadImageFromFile(file)
-  const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d')!
-  canvas.width = img.width
-  canvas.height = img.height
+export async function applyWatermark(file: File, logoUrl: string, opacity = 0.85): Promise<Blob> {
+  const baseImg = await readAsImage(file);
+  const logoImg = await loadImage(logoUrl); // mora biti sa istog domena (npr. /watermark.png)
 
-  // nacrtaj original
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+  // (opciono) smanji ogromne fotke da fajl bude razuman
+  const MAX_W = 2800;
+  const scale = baseImg.width > MAX_W ? MAX_W / baseImg.width : 1;
+  const W = Math.round(baseImg.width * scale);
+  const H = Math.round(baseImg.height * scale);
 
-  // učitaj logo
-  const logo = await loadImage(logoUrl)
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(baseImg, 0, 0, W, H);
 
-  // izračunaj veličinu i poziciju – ~25% širine slike, 8% margina
-  const targetW = Math.floor(canvas.width * 0.25)
-  const scale = targetW / logo.width
-  const targetH = Math.floor(logo.height * scale)
-  const margin = Math.floor(Math.min(canvas.width, canvas.height) * 0.08)
-  const x = canvas.width - targetW - margin
-  const y = canvas.height - targetH - margin
+  // logo ~25% širine fotke, padding 2%
+  const targetW = Math.round(W * 0.25);
+  const ratio = targetW / logoImg.width;
+  const targetH = Math.round(logoImg.height * ratio);
+  const pad = Math.round(Math.min(W, H) * 0.02);
+  const x = W - targetW - pad;
+  const y = H - targetH - pad;
 
-  // poluprovidna “podloga”
-  ctx.globalAlpha = 0.25
-  ctx.fillStyle = '#000'
-  ctx.fillRect(x - 8, y - 8, targetW + 16, targetH + 16)
+  ctx.globalAlpha = 0.28;           // tamna “podloga” da logo bude čitljiv
+  ctx.fillStyle = '#000';
+  ctx.fillRect(x - 10, y - 10, targetW + 20, targetH + 20);
 
-  // logo
-  ctx.globalAlpha = 0.75
-  ctx.drawImage(logo, x, y, targetW, targetH)
-  ctx.globalAlpha = 1
+  ctx.globalAlpha = opacity;        // sam logo
+  ctx.drawImage(logoImg, x, y, targetW, targetH);
+  ctx.globalAlpha = 1;
 
-  // vrati kao JPEG (manji fajl), može i image/png ako hoćeš bez kompresije
   return await new Promise<Blob>((resolve) =>
-    canvas.toBlob((blob) => resolve(blob!), 'image/jpeg', 0.92)
-  )
+    canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.92) // vraćamo JPEG
+  );
 }
 
-function loadImageFromFile(file: File): Promise<HTMLImageElement> {
-  return new Promise((res, rej) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      loadImage(reader.result as string).then(res).catch(rej)
-    }
-    reader.onerror = rej
-    reader.readAsDataURL(file)
-  })
+function readAsImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => loadImage(fr.result as string).then(resolve).catch(reject);
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((res, rej) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => res(img)
-    img.onerror = rej
-    img.src = src
-  })
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
 }
