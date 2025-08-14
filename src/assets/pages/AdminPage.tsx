@@ -118,6 +118,27 @@ export default function AdminPage(){
     const done = tasks.filter(t=>t.done).length
     return Math.round(done / tasks.length * 100)
   }, [tasks])
+  function errText(e:any){
+  if (!e) return 'Nepoznata greška'
+  if (typeof e === 'string') return e
+  if (e.message) return e.message
+  try { return JSON.stringify(e) } catch { return String(e) }
+}
+
+/** Wrap za uploadBytesResumable – vrati downloadURL kada završi */
+function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentType='image/jpeg'): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(r, data, { contentType })
+    task.on('state_changed',
+      // snap => console.log('Upload', Math.round(snap.bytesTransferred/snap.totalBytes*100)+'%'),
+      err => reject(err),
+      async () => {
+        try { resolve(await getDownloadURL(task.snapshot.ref)) }
+        catch (e) { reject(e) }
+      }
+    )
+  })
+}
 
   // AUTH handlers
   async function login(){
@@ -171,49 +192,57 @@ export default function AdminPage(){
   }
 
   async function addUpdate(){
-    setMsg(null); setErr(null); setBusy(true)
-    try{
-      if (!user) throw new Error('Nisi prijavljen.')
-      if (!selId) throw new Error('Izaberi proizvod.')
+  setMsg(null); setErr(null); setBusy(true)
+  try{
+    if (!user) throw new Error('Nisi prijavljen.')
+    if (!selId) throw new Error('Izaberi proizvod.') // jedino “obavezno”
 
-      const urls: string[] = []
-      if (files && files.length){
-        for (const f of Array.from(files)){
-          try {
-            // 1) watermark → JPEG Blob (manji)
-            const blob = await applyWatermark(f, WATERMARK_URL, 0.9)
-            // 2) jedinstveno ime (cache-bust)
-            const safeName = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safeName}`
-            const r = ref(storage, path)
-            // 3) rezime upload
-            const url = await uploadWithProgress(r, blob, 'image/jpeg')
-            urls.push(url)
-          } catch (wmOrUploadErr) {
-            // fallback: original file, takođe rezime
-            const safeName = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safeName}`
-            const r = ref(storage, path)
-            const url = await uploadWithProgress(r, f, (f as any).type || 'application/octet-stream')
-            urls.push(url)
-          }
+    const urls: string[] = []
+
+    if (files && files.length){
+      for (const f of Array.from(files)){
+        try {
+          // 1) Watermark → manji JPEG blob
+          const blob = await applyWatermark(f, '/watermark.png', 0.9)
+
+          // 2) Jedinstveno ime (radi cache-bust)
+          const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
+          const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
+          const r = ref(storage, path)
+
+          // 3) Resumable upload i čekamo kraj (promise)
+          const url = await uploadWithProgress(r, blob, 'image/jpeg')
+          urls.push(url)
+        } catch (wmErr) {
+          console.warn('Watermark/upload greška, šaljem original:', wmErr)
+          const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
+          const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
+          const r = ref(storage, path)
+          const url = await uploadWithProgress(r, f, (f as any).type || 'application/octet-stream')
+          urls.push(url)
         }
       }
+    }
 
-      await addDoc(collection(db,'products',selId,'updates'), {
-        taskId: selTaskId || '',
-        note: note || '',
-        images: urls,
-        createdAt: serverTimestamp(),
-        author: user?.email || user?.uid || 'admin'
-      })
-      setNote(''); setFiles(null)
-      const fin = document.getElementById('files') as HTMLInputElement | null
-      if (fin) fin.value = ''
-      setMsg('Update sačuvan.')
-    }catch(e:any){ setErr(e?.message || String(e)) }
-    finally{ setBusy(false) }
+    await addDoc(collection(db,'products',selId,'updates'), {
+      taskId: selTaskId || '',
+      note: note || '',
+      images: urls,
+      createdAt: serverTimestamp(),
+      author: user?.email || user?.uid || 'admin'
+    })
+
+    setNote(''); setFiles(null)
+    const fin = document.getElementById('files') as HTMLInputElement | null
+    if (fin) fin.value = ''
+    setMsg('Update sačuvan.')
+  }catch(e:any){
+    setErr(errText(e)) // ← više nema [object Object]
+  }finally{
+    setBusy(false)
   }
+}
+
 
   // DELETE – update, task (sa njegovim update-ima), proizvod (kaskadno)
   async function deleteUpdate(updateId: string){
@@ -464,3 +493,4 @@ function UpdatesList({ productId, onDelete }:{productId:string; onDelete:(id:str
     </section>
   )
 }
+
