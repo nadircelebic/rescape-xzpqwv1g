@@ -10,7 +10,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyA-pfzL9lXK1nY66_ps2rdauL0q_dKXKlU",
   authDomain: "pracenje-proizvoda.firebaseapp.com",
   projectId: "pracenje-proizvoda",
-  storageBucket: "pracenje-proizvoda.firebasestorage.app",
+  storageBucket: "pracenje-proizvoda.appspot.com",
   messagingSenderId: "895591711314",
   appId: "1:895591711314:web:d48f93bbf4e894a91e158b"
 };
@@ -21,3 +21,4 @@ export const auth = getAuth(app)
 export const provider = new GoogleAuthProvider()
 export const db = getFirestore(app)
 export const storage = getStorage(app)
+
