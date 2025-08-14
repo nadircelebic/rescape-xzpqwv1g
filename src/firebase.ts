@@ -11,14 +11,13 @@ const firebaseConfig = {
   authDomain: "pracenje-proizvoda.firebaseapp.com",
   projectId: "pracenje-proizvoda",
   storageBucket: "pracenje-proizvoda.appspot.com",
-  messagingSenderId: "895591711314",
   appId: "1:895591711314:web:d48f93bbf4e894a91e158b"
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app)
-export const provider = new GoogleAuthProvider()
 export const db = getFirestore(app)
 export const storage = getStorage(app)
+
 
