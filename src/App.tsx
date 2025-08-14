@@ -23,7 +23,7 @@ export default function App() {
         </Routes>
 
         <footer style={{textAlign:'center', fontSize:12, opacity:.6, marginTop:40, padding:10, borderTop:'1px solid #1f2937'}}>
-          © {new Date().getFullYear()} Vaše ime
+          © {new Date().getFullYear()} Nadir Čelebić - Sva prava zadržana
         </footer>
       </div>
     </Router>
