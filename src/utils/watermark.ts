@@ -1,9 +1,9 @@
 // src/utils/watermark.ts
-export async function applyWatermark(file: File, logoUrl: string, opacity = 0.85): Promise<Blob> {
+export async function applyWatermark(file: File, logoUrl: string, opacity = 0.9): Promise<Blob> {
   const baseImg = await readAsImage(file);
-  const logoImg = await loadImage(logoUrl); // mora biti sa istog domena (npr. /watermark.png)
+  const logoImg = await loadImage(logoUrl); // mora biti dostupan na istom domenu (npr. /watermark.png)
 
-  // (opciono) smanji ogromne fotke da fajl bude razuman
+  // (opciono) smanji ogromne fotke (radi veličine fajla)
   const MAX_W = 2800;
   const scale = baseImg.width > MAX_W ? MAX_W / baseImg.width : 1;
   const W = Math.round(baseImg.width * scale);
@@ -14,7 +14,7 @@ export async function applyWatermark(file: File, logoUrl: string, opacity = 0.85
   const ctx = canvas.getContext('2d')!;
   ctx.drawImage(baseImg, 0, 0, W, H);
 
-  // logo ~25% širine fotke, padding 2%
+  // watermark ~25% širine, padding 2% u donjem desnom
   const targetW = Math.round(W * 0.25);
   const ratio = targetW / logoImg.width;
   const targetH = Math.round(logoImg.height * ratio);
@@ -22,16 +22,18 @@ export async function applyWatermark(file: File, logoUrl: string, opacity = 0.85
   const x = W - targetW - pad;
   const y = H - targetH - pad;
 
-  ctx.globalAlpha = 0.28;           // tamna “podloga” da logo bude čitljiv
+  // blaga crna podloga da logo bude čitljiv
+  ctx.globalAlpha = 0.28;
   ctx.fillStyle = '#000';
   ctx.fillRect(x - 10, y - 10, targetW + 20, targetH + 20);
 
-  ctx.globalAlpha = opacity;        // sam logo
+  // logo
+  ctx.globalAlpha = opacity;
   ctx.drawImage(logoImg, x, y, targetW, targetH);
   ctx.globalAlpha = 1;
 
   return await new Promise<Blob>((resolve) =>
-    canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.92) // vraćamo JPEG
+    canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.92)
   );
 }
 
