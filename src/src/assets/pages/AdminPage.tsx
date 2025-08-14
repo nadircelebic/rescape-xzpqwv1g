@@ -5,7 +5,7 @@ import {
   orderBy, query, serverTimestamp, getDocs, getDoc, where
 } from 'firebase/firestore'
 import {
-  ref, uploadBytes, getDownloadURL, deleteObject, listAll
+  ref, getDownloadURL, deleteObject, listAll, uploadBytesResumable
 } from 'firebase/storage'
 import {
   onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult,
@@ -21,7 +21,22 @@ type Update  = { id: string; taskId?: string; note?: string; images?: string[]; 
 const ALLOW = ['nadir.celebic1@gmail.com','ljaljakedvin@gmail.com','jasmin.celebic1@gmail.com']
 const provider = new GoogleAuthProvider(); provider.setCustomParameters({ prompt:'select_account' })
 const fmt = (ts?: any) => { try { return ts?.toDate ? ts.toDate().toLocaleString() : '' } catch { return '' } }
-const WATERMARK_URL = '/watermark.png' // fajl u public/
+const WATERMARK_URL = '/watermark.png' // public/watermark.png
+
+// helper: resumable upload → vrati downloadURL
+function uploadWithProgress(r: ReturnType<typeof ref>, blob: Blob, contentType='image/jpeg'): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(r, blob, { contentType })
+    task.on('state_changed',
+      // snap => console.log('upload', Math.round(snap.bytesTransferred / snap.totalBytes * 100) + '%'),
+      err => reject(err),
+      async () => {
+        try { resolve(await getDownloadURL(task.snapshot.ref)) }
+        catch (e) { reject(e) }
+      }
+    )
+  })
+}
 
 export default function AdminPage(){
   // AUTH
@@ -118,62 +133,79 @@ export default function AdminPage(){
   // CRUD — polja NE moraju biti popunjena
   async function addProduct(){
     setMsg(null); setErr(null)
-    await addDoc(collection(db,'products'), {
-      name: name || '', note: pnote || '', status: status || 'u_izradi',
-      createdAt: serverTimestamp()
-    })
-    setName(''); setPnote('')
+    try{
+      if (!user) throw new Error('Nisi prijavljen.')
+      await addDoc(collection(db,'products'), {
+        name: name || '', note: pnote || '', status: status || 'u_izradi',
+        createdAt: serverTimestamp()
+      })
+      setName(''); setPnote('')
+      setMsg('Proizvod dodat.')
+    }catch(e:any){ setErr(e?.message || String(e)) }
   }
   async function saveProdMeta(){
-    if (!selectedProduct) return
-    await updateDoc(doc(db,'products',selectedProduct.id), { name, note: pnote, status })
-    setMsg('Proizvod sačuvan.')
+    setMsg(null); setErr(null)
+    try{
+      if (!user) throw new Error('Nisi prijavljen.')
+      if (!selectedProduct) throw new Error('Nije izabran proizvod.')
+      await updateDoc(doc(db,'products',selectedProduct.id), { name, note: pnote || '', status: status || 'u_izradi' })
+      setMsg('Proizvod sačuvan.')
+    }catch(e:any){ setErr(e?.message || String(e)) }
   }
   async function addTask(){
     setMsg(null); setErr(null)
-    if (!selId){ setErr('Izaberi proizvod.'); return }
-    const order = tasks.length ? Math.max(...tasks.map(t=>t.order))+1 : 1
-    await addDoc(collection(db,'products',selId,'tasks'), {
-      title: taskTitle || '', order, done:false, createdAt: serverTimestamp()
-    })
-    setTaskTitle('')
+    try{
+      if (!user) throw new Error('Nisi prijavljen.')
+      if (!selId) throw new Error('Izaberi proizvod.')
+      const order = tasks.length ? Math.max(...tasks.map(t=>t.order))+1 : 1
+      await addDoc(collection(db,'products',selId,'tasks'), {
+        title: taskTitle || '', order, done:false, createdAt: serverTimestamp()
+      })
+      setTaskTitle('')
+      setMsg('Korak dodat.')
+    }catch(e:any){ setErr(e?.message || String(e)) }
   }
   async function toggleTask(t: Task){
-    await updateDoc(doc(db,'products',selId,'tasks',t.id), { done: !t.done })
+    try { await updateDoc(doc(db,'products',selId,'tasks',t.id), { done: !t.done }) }
+    catch(e:any){ setErr(e?.message || String(e)) }
   }
 
   async function addUpdate(){
-    setMsg(null); setErr(null)
-    if (!selId){ setErr('Izaberi proizvod.'); return }
-    // task i note su opciono (može i bez)
-    setBusy(true)
+    setMsg(null); setErr(null); setBusy(true)
     try{
+      if (!user) throw new Error('Nisi prijavljen.')
+      if (!selId) throw new Error('Izaberi proizvod.')
+
       const urls: string[] = []
       if (files && files.length){
         for (const f of Array.from(files)){
           try {
-            // 1) watermark → JPEG Blob
+            // 1) watermark → JPEG Blob (manji)
             const blob = await applyWatermark(f, WATERMARK_URL, 0.9)
-            // 2) unique ime (radi cache-bust)
+            // 2) jedinstveno ime (cache-bust)
             const safeName = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
             const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safeName}`
             const r = ref(storage, path)
-            // 3) upload JPEG
-            await uploadBytes(r, blob, { contentType: 'image/jpeg' })
-            urls.push(await getDownloadURL(r))
-          } catch (e){
-            // fallback: original
+            // 3) rezime upload
+            const url = await uploadWithProgress(r, blob, 'image/jpeg')
+            urls.push(url)
+          } catch (wmOrUploadErr) {
+            // fallback: original file, takođe rezime
             const safeName = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
             const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safeName}`
             const r = ref(storage, path)
-            await uploadBytes(r, f)
-            urls.push(await getDownloadURL(r))
+            const url = await uploadWithProgress(r, f, (f as any).type || 'application/octet-stream')
+            urls.push(url)
           }
         }
       }
+
       await addDoc(collection(db,'products',selId,'updates'), {
-        taskId: selTaskId || '', note: note || '', images: urls,
-        createdAt: serverTimestamp(), author: user?.email || user?.uid || 'admin'
+        taskId: selTaskId || '',
+        note: note || '',
+        images: urls,
+        createdAt: serverTimestamp(),
+        author: user?.email || user?.uid || 'admin'
       })
       setNote(''); setFiles(null)
       const fin = document.getElementById('files') as HTMLInputElement | null
@@ -200,7 +232,6 @@ export default function AdminPage(){
   async function deleteTask(taskId: string){
     if (!selId) return
     if (!confirm('Obrisati ovaj korak i sve njegove update-e?')) return
-    // obriši update-e vezane za task
     const uq = query(collection(db,'products',selId,'updates'), where('taskId','==',taskId))
     const us = await getDocs(uq)
     for (const d of us.docs){
@@ -218,8 +249,6 @@ export default function AdminPage(){
   async function deleteProductCascade(){
     if (!selId) return
     if (!confirm('Obrisati ceo proizvod, sve korake, updejte i slike?')) return
-
-    // 1) updates (+ slike)
     const us = await getDocs(collection(db,'products',selId,'updates'))
     for (const d of us.docs){
       const u = d.data() as Update
@@ -230,10 +259,8 @@ export default function AdminPage(){
       }
       await deleteDoc(d.ref)
     }
-    // 2) tasks
     const ts = await getDocs(collection(db,'products',selId,'tasks'))
     for (const d of ts.docs) await deleteDoc(d.ref)
-    // 3) storage folder (best-effort)
     try {
       const root = ref(storage, `uploads/${selId}`)
       const stack = [root]
@@ -244,7 +271,6 @@ export default function AdminPage(){
         for (const p of ls.prefixes) stack.push(p)
       }
     } catch {}
-    // 4) proizvod
     await deleteDoc(doc(db,'products', selId))
     setSelId('')
   }
@@ -389,7 +415,7 @@ export default function AdminPage(){
             {err && <div style={{ marginTop: 10, color: '#ef4444' }}>{err}</div>}
           </section>
 
-          {/* (Opciono) pregled i brisanje update-a */}
+          {/* Pregled i brisanje update-a */}
           <UpdatesList productId={selId} onDelete={deleteUpdate} />
         </>
       )}
