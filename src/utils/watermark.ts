@@ -1,20 +1,20 @@
 // src/utils/watermark.ts
 export async function applyWatermark(file: File, logoUrl: string, opacity = 0.9): Promise<Blob> {
   const baseImg = await readAsImage(file);
-  const logoImg = await loadImage(logoUrl); // mora biti dostupan na istom domenu (npr. /watermark.png)
+  const logoImg = await loadImage(logoUrl); // /watermark.png ili import iz src/assets
 
-  // (opciono) smanji ogromne fotke (radi veličine fajla)
-  const MAX_W = 1600;
-  const scale = baseImg.width > MAX_W ? MAX_W / baseImg.width : 1;
-  const W = Math.round(baseImg.width * scale);
-  const H = Math.round(baseImg.height * scale);
+  // Smanji veliku fotku da upload bude brži/stabilniji
+  const MAX = 1600; // duža stranica max 1600px
+  const k = Math.min(MAX / baseImg.width, MAX / baseImg.height, 1);
+  const W = Math.round(baseImg.width * k);
+  const H = Math.round(baseImg.height * k);
 
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d')!;
+  const canv = document.createElement('canvas');
+  canv.width = W; canv.height = H;
+  const ctx = canv.getContext('2d')!;
   ctx.drawImage(baseImg, 0, 0, W, H);
 
-  // watermark ~25% širine, padding 2% u donjem desnom
+  // logo ~25% širine, padding 2%
   const targetW = Math.round(W * 0.25);
   const ratio = targetW / logoImg.width;
   const targetH = Math.round(logoImg.height * ratio);
@@ -22,7 +22,7 @@ export async function applyWatermark(file: File, logoUrl: string, opacity = 0.9)
   const x = W - targetW - pad;
   const y = H - targetH - pad;
 
-  // blaga crna podloga da logo bude čitljiv
+  // blaga podloga
   ctx.globalAlpha = 0.28;
   ctx.fillStyle = '#000';
   ctx.fillRect(x - 10, y - 10, targetW + 20, targetH + 20);
@@ -32,8 +32,9 @@ export async function applyWatermark(file: File, logoUrl: string, opacity = 0.9)
   ctx.drawImage(logoImg, x, y, targetW, targetH);
   ctx.globalAlpha = 1;
 
+  // JPEG 0.85 → još manji fajl
   return await new Promise<Blob>((resolve) =>
-    canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.85)
+    canv.toBlob((b) => resolve(b!), 'image/jpeg', 0.85)
   );
 }
 
