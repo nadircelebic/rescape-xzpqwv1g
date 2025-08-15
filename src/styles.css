@@ -47,12 +47,16 @@ body {
   position: absolute;
   right: 10px; top: 6px;
   width: 120px; height: 40px;
-  background: url('/logo.png') no-repeat center / contain;
-  opacity: 0.08;            /* “malo vidljiv” */
-  filter: grayscale(100%);  /* diskretno */
-  pointer-events: none;     /* da ne smeta klikovima */
-  z-index: 0;               /* ispod linkova */
+  /* background-image dolazi iz inline style u App.tsx */
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: 0.08;
+  filter: grayscale(100%);
+  pointer-events: none;
+  z-index: 0;
 }
+
 
 /* Ako želiš ga centriranog umesto desno, koristi ovo umesto right/top:
    left: 50%; transform: translateX(-50%); top: 6px; right: auto;
@@ -151,3 +155,4 @@ textarea.input { min-height:90px; resize:vertical; }
 
 /* ---------- PRAZNA STANJA ---------- */
 .empty { color:var(--mut); padding:8px 0; }
+
