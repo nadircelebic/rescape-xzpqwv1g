@@ -114,6 +114,40 @@ async function downscaleOnly(file: File, max = 1600, quality = 0.85): Promise<Bl
   return await new Promise<Blob>((r)=> c.toBlob(b=>r(b!), 'image/jpeg', quality))
 }
 
+/* ---------- Dijagnostika: 1 KB test upload direktno u Storage ---------- */
+async function testUploadTiny(
+  storageInst: typeof storage,
+  setMsg: (s:string|null)=>void,
+  setErr:(s:string|null)=>void
+){
+  setMsg(null); setErr(null);
+  try{
+    const txt = 'diagnostic-' + Date.now();
+    const blob = new Blob([txt.padEnd(1024, '.')], { type: 'text/plain' });
+    const path = `diagnostics/${Date.now()}_ping.txt`;
+    const r = ref(storageInst, path);
+
+    const url = await new Promise<string>((resolve, reject) => {
+      const task = uploadBytesResumable(r, blob, { contentType: 'text/plain' });
+      const to = setTimeout(()=>{ try{task.cancel()}catch{}; reject(new Error('Diag timeout 15s')); }, 15_000);
+      task.on('state_changed',
+        // progress ignore
+        err => { clearTimeout(to); reject(err) },
+        async () => {
+          clearTimeout(to);
+          try { resolve(await getDownloadURL(task.snapshot.ref)); }
+          catch (e) { reject(e); }
+        }
+      )
+    });
+
+    setMsg('✅ Test upload OK. URL: ' + url);
+  }catch(e:any){
+    const code = e?.code ? ` (${e.code})` : '';
+    setErr(`❌ Test upload FAIL${code}: ` + (e?.message || String(e)));
+  }
+}
+
 export default function AdminPage(){
   // AUTH
   const [user, setUser] = useState<any>(null)
@@ -505,6 +539,14 @@ export default function AdminPage(){
             <input id="files" type="file" accept="image/*" multiple onChange={e=>setFiles(e.target.files)} />
             <div style={{ marginTop: 10, display:'flex', gap:8, flexWrap:'wrap' }}>
               <button type="button" className="btn" disabled={busy} onClick={addUpdate}>Sačuvaj update</button>
+              <button
+                type="button"
+                className="btn ghost"
+                disabled={busy}
+                onClick={() => testUploadTiny(storage, setMsg, setErr)}
+              >
+                Test upload (1 KB)
+              </button>
             </div>
             {msg && <div style={{ marginTop: 10, color: '#22c55e' }}>{msg}</div>}
             {err && <div style={{ marginTop: 10, color: '#ef4444' }}>{err}</div>}
