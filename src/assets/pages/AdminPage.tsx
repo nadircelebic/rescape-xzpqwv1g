@@ -32,7 +32,7 @@ function errText(e:any){
   try { return JSON.stringify(e) } catch { return String(e) }
 }
 
-/** Promise wrap za uploadBytesResumable → vrati downloadURL */
+/** ČIST helper: resumable upload → vrati downloadURL (bez setErr u progress-u) */
 function uploadWithProgress(
   r: ReturnType<typeof ref>,
   data: Blob | File,
@@ -40,26 +40,23 @@ function uploadWithProgress(
   onProgress?: (pct: number) => void
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(r, data, { contentType });
+    const task = uploadBytesResumable(r, data, { contentType })
     task.on(
       'state_changed',
-      snap => {
+      (snap) => {
         if (onProgress && snap.totalBytes > 0) {
-          onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100));
+          const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100)
+          onProgress(pct)
         }
-        // VAŽNO: NEMA setErr ovde – ovo NIJE greška, samo progress!
+        // NEMA setErr ovde — ovo je samo progress!
       },
-      err => reject(err),
+      (err) => reject(err),
       async () => {
-        try {
-          const url = await getDownloadURL(task.snapshot.ref);
-          resolve(url);
-        } catch (e) {
-          reject(e);
-        }
+        try { resolve(await getDownloadURL(task.snapshot.ref)) }
+        catch (e) { reject(e) }
       }
-    );
-  });
+    )
+  })
 }
 
 /** Fallback: resize bez watermarka (ako watermark padne) */
@@ -110,6 +107,7 @@ export default function AdminPage(){
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<string|null>(null)
   const [err, setErr] = useState<string|null>(null)
+  const [pct, setPct] = useState<number>(0)
 
   // AUTH lifecycle
   useEffect(()=>{
@@ -214,49 +212,37 @@ export default function AdminPage(){
     catch(e:any){ setErr(errText(e)) }
   }
 
-  // ⬇️ WATERMARK + RESUMABLE UPLOAD + FIRESTORE UPDATE
+  // WATERMARK + RESUMABLE UPLOAD + FIRESTORE
   async function addUpdate() {
-    setMsg(null); setErr(null); setBusy(true);
+    setMsg(null); setErr(null); setBusy(true); setPct(0)
     try {
-      if (!user) throw new Error('Nisi prijavljen.');
-      if (!selId) throw new Error('Izaberi proizvod.'); // jedino obavezno
+      if (!user) throw new Error('Nisi prijavljen.')
+      if (!selId) throw new Error('Izaberi proizvod.') // jedino obavezno
 
-      const urls: string[] = [];
+      const urls: string[] = []
 
       if (files && files.length) {
         for (const f of Array.from(files)) {
           try {
-            // 1) Watermark sa lokalnim importom (nema CORS) → manji JPEG
-            let blob = await applyWatermark(f, watermarkPng, 0.9);
-
-            // 2) Ako je i dalje veliko, dodatno smanji
+            let blob = await applyWatermark(f, watermarkPng, 0.9)
             if (blob.size > 3 * 1024 * 1024) {
-              blob = await downscaleOnly(f, 1600, 0.82);
+              blob = await downscaleOnly(f, 1600, 0.82)
             }
+            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
+            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
+            const r = ref(storage, path)
 
-            // 3) Putanja i resumable upload (uvek šaljemo BLOB, nikad originalni File)
-            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
-            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
-            const r = ref(storage, path);
-
-            const url = await uploadWithProgress(r, blob, 'image/jpeg');
-            urls.push(url);
-
-            // console.log('UPLOAD OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024));
+            // bez setErr u progressu:
+            const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p))
+            urls.push(url)
           } catch (e) {
-            console.warn('Watermark fail → downscale-only fallback', e);
-
-            // 4) Nikad ne šaljemo original: makar smanji pa pošalji
-            const blob = await downscaleOnly(f, 1600, 0.82);
-
-            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
-            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
-            const r = ref(storage, path);
-
-            const url = await uploadWithProgress(r, blob, 'image/jpeg');
-            urls.push(url);
-
-            // console.log('UPLOAD Fallback OK', safe, 'blobKB=', Math.round(blob.size/1024));
+            // fallback: nikad ne šalji original, smanji pa pošalji
+            const blob = await downscaleOnly(f, 1600, 0.82)
+            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
+            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
+            const r = ref(storage, path)
+            const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p))
+            urls.push(url)
           }
         }
       }
@@ -267,16 +253,16 @@ export default function AdminPage(){
         images: urls,
         createdAt: serverTimestamp(),
         author: user?.email || user?.uid || 'admin'
-      });
+      })
 
-      setNote(''); setFiles(null);
-      const fin = document.getElementById('files') as HTMLInputElement | null;
-      if (fin) fin.value = '';
-      setMsg('Update sačuvan.');
+      setNote(''); setFiles(null); setPct(0)
+      const fin = document.getElementById('files') as HTMLInputElement | null
+      if (fin) fin.value = ''
+      setMsg('Update sačuvan.')
     } catch (e:any) {
-      setErr(errText(e));        // lep tekst umesto [object Object]
+      setErr(errText(e))
     } finally {
-      setBusy(false);
+      setBusy(false)
     }
   }
 
@@ -435,6 +421,9 @@ export default function AdminPage(){
               <div className="kv" style={{ marginTop: 6 }}>
                 Progres: <b>{progress}%</b> ({tasks.filter(t => t.done).length}/{tasks.length})
               </div>
+              {!!pct && pct>0 && pct<100 && (
+                <div className="kv" style={{ marginTop: 6 }}>Upload: {pct}%</div>
+              )}
             </div>
 
             {!!selectedProduct.note && (
