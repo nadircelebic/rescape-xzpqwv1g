@@ -1,3 +1,4 @@
+// src/assets/pages/AdminPage.tsx
 import { useEffect, useMemo, useState } from 'react'
 import { db, storage, auth } from '../../firebase'
 import {
@@ -31,7 +32,10 @@ function errText(e:any){
   try { return JSON.stringify(e) } catch { return String(e) }
 }
 
-const UPLOAD_TIMEOUT_MS = 60_000
+/* ---------- Stabilan resumable upload sa hard timeout + inactivity watchdog ---------- */
+const UPLOAD_TIMEOUT_MS = 60_000;    // hard timeout (60s)
+const INACTIVITY_MS     = 10_000;    // ako 10s nema napretka → cancel
+
 function uploadWithProgress(
   r: ReturnType<typeof ref>,
   data: Blob | File,
@@ -39,31 +43,58 @@ function uploadWithProgress(
   onProgress?: (pct: number) => void
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(r, data, { contentType })
-    let timedOut = false
-    const to = setTimeout(() => {
-      timedOut = true
-      try { task.cancel() } catch {}
-      reject(new Error('Upload timeout (60s). Provjeri mrežu / ad-block / proxy.'))
-    }, UPLOAD_TIMEOUT_MS)
+    const task = uploadBytesResumable(r, data, { contentType });
 
-    task.on('state_changed',
+    let lastTransferred = 0;
+    let timedOut = false;
+
+    const hard = setTimeout(() => {
+      timedOut = true;
+      try { task.cancel(); } catch {}
+      reject(new Error('Upload timeout (60s). Moguće da mreža/ekstenzija blokira konekciju.'));
+    }, UPLOAD_TIMEOUT_MS);
+
+    let idleTimer: any = setTimeout(onIdle, INACTIVITY_MS);
+    function onIdle() {
+      try { task.cancel(); } catch {}
+      clearTimeout(hard);
+      reject(new Error('Upload blokiran (nema napretka 10s). Proveri ad-block/proxy ili probaj incognito/drugu mrežu.'));
+    }
+
+    task.on(
+      'state_changed',
       (snap) => {
-        if (timedOut) return
+        if (timedOut) return;
+        if (snap.bytesTransferred !== lastTransferred) {
+          lastTransferred = snap.bytesTransferred;
+          clearTimeout(idleTimer);
+          idleTimer = setTimeout(onIdle, INACTIVITY_MS);
+        }
         if (onProgress && snap.totalBytes > 0) {
-          onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100))
+          const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
+          onProgress(pct);
         }
       },
-      (err) => { clearTimeout(to); reject(err) },
+      (err) => {
+        clearTimeout(hard);
+        clearTimeout(idleTimer);
+        reject(err);
+      },
       async () => {
-        clearTimeout(to)
-        try { resolve(await getDownloadURL(task.snapshot.ref)) }
-        catch (e) { reject(e) }
+        clearTimeout(hard);
+        clearTimeout(idleTimer);
+        try {
+          const url = await getDownloadURL(task.snapshot.ref);
+          resolve(url);
+        } catch (e) {
+          reject(e);
+        }
       }
-    )
-  })
+    );
+  });
 }
 
+/* ---------- Fallback resize (ako watermark padne) ---------- */
 async function downscaleOnly(file: File, max = 1600, quality = 0.85): Promise<Blob> {
   const img = await new Promise<HTMLImageElement>((res, rej) => {
     const fr = new FileReader()
@@ -93,7 +124,7 @@ export default function AdminPage(){
   const [products, setProducts] = useState<Product[]>([])
   const [selId, setSelId] = useState<string>('')
 
-  // Meta za selektovani proizvod
+  // Meta selektovanog proizvoda (neobavezna polja)
   const [name, setName] = useState('')
   const [pnote, setPnote] = useState('')
   const [status, setStatus] = useState<Status>('u_izradi')
@@ -102,7 +133,7 @@ export default function AdminPage(){
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskTitle, setTaskTitle] = useState('')
 
-  // Update
+  // Update (unos)
   const [selTaskId, setSelTaskId] = useState<string>('')
   const [note, setNote] = useState('')
   const [files, setFiles] = useState<FileList | null>(null)
@@ -113,6 +144,7 @@ export default function AdminPage(){
   const [err, setErr] = useState<string|null>(null)
   const [pct, setPct] = useState<number>(0)
 
+  // AUTH lifecycle
   useEffect(()=>{
     setPersistence(auth, browserLocalPersistence).catch(()=>{})
     getRedirectResult(auth).catch(()=>{})
@@ -129,6 +161,7 @@ export default function AdminPage(){
     return ()=>unsub()
   },[])
 
+  // Proizvodi
   useEffect(()=>{
     const q = query(collection(db,'products'), orderBy('createdAt','desc'))
     const unsub = onSnapshot(q, snap=>{
@@ -144,6 +177,7 @@ export default function AdminPage(){
     return ()=>unsub()
   }, [selId])
 
+  // Taskovi za izabrani proizvod
   useEffect(()=>{
     if (!selId){ setTasks([]); setSelTaskId(''); return }
     const tq = query(collection(db,'products',selId,'tasks'), orderBy('order','asc'))
@@ -162,6 +196,7 @@ export default function AdminPage(){
     return Math.round(done / tasks.length * 100)
   }, [tasks])
 
+  // AUTH handlers
   async function login(){
     setAuthError(null)
     try { await signInWithPopup(auth, provider) }
@@ -172,6 +207,7 @@ export default function AdminPage(){
   }
   async function logout(){ await signOut(auth) }
 
+  // CRUD — polja NE moraju biti popunjena
   async function addProduct(){
     setMsg(null); setErr(null)
     try{
@@ -211,51 +247,44 @@ export default function AdminPage(){
     catch(e:any){ setErr(errText(e)) }
   }
 
+  // Upload + Firestore update
   async function addUpdate() {
     setMsg(null); setErr(null); setBusy(true); setPct(0)
     try {
       if (!user) throw new Error('Nisi prijavljen.')
       if (!selId) throw new Error('Izaberi proizvod.')
 
-      const urls: string[] = [];
+      const urls: string[] = []
 
-if (files && files.length) {
-  for (const f of Array.from(files)) {
-    // koristimo "continue" umesto da celokupni update visi
-    try {
-      // 1) watermark + resize
-      let blob = await applyWatermark(f, watermarkPng, 0.9);
-      if (blob.size > 3 * 1024 * 1024) {
-        blob = await downscaleOnly(f, 1600, 0.82);
+      if (files && files.length) {
+        for (const f of Array.from(files)) {
+          try {
+            // watermark + resize
+            let blob = await applyWatermark(f, watermarkPng, 0.9)
+            if (blob.size > 3 * 1024 * 1024) {
+              blob = await downscaleOnly(f, 1600, 0.82)
+            }
+            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
+            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
+            const r = ref(storage, path)
+            const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p))
+            urls.push(url)
+          } catch (e) {
+            // fallback – nikad ne šalji original
+            try {
+              const blob = await downscaleOnly(f, 1600, 0.82)
+              const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
+              const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
+              const r = ref(storage, path)
+              const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p))
+              urls.push(url)
+            } catch (e2:any) {
+              setErr(prev => (prev ? prev + '\n' : '') + errText(e2))
+              continue
+            }
+          }
+        }
       }
-
-      // 2) putanja
-      const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
-      const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
-      const r = ref(storage, path);
-
-      // 3) resumable upload + progress (bez setErr u progressu)
-      const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p));
-      urls.push(url);
-    } catch (e) {
-      // Fallback: probaj čisto smanjenje + upload
-      try {
-        const blob = await downscaleOnly(f, 1600, 0.82);
-        const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
-        const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
-        const r = ref(storage, path);
-        const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p));
-        urls.push(url);
-      } catch (e2) {
-        // Ako i to padne — zabeleži, ali NEMOJ da blokira ceo update
-        console.warn('Upload preskočen zbog greške:', e2);
-        setErr(prev => (prev ? prev + '\n' : '') + (e2 as any)?.message ?? String(e2));
-        continue;
-      }
-    }
-  }
-}
-
 
       await addDoc(collection(db, 'products', selId, 'updates'), {
         taskId: selTaskId || '',
@@ -276,6 +305,7 @@ if (files && files.length) {
     }
   }
 
+  // DELETE – update, task (sa njegovim update-ima), proizvod (kaskadno)
   async function deleteUpdate(updateId: string){
     if (!selId) return
     if (!confirm('Obrisati ovaj update?')) return
@@ -298,7 +328,7 @@ if (files && files.length) {
       const u = d.data() as Update
       if (u?.images?.length){
         for (const url of u.images){
-          try { await deleteObject(ref(storage, url)) } catch {}
+            try { await deleteObject(ref(storage, url)) } catch {}
         }
       }
       await deleteDoc(d.ref)
@@ -335,6 +365,7 @@ if (files && files.length) {
     setSelId('')
   }
 
+  // RENDER
   if (!user) {
     return (
       <div className="app-wrap">
@@ -371,6 +402,7 @@ if (files && files.length) {
         </div>
       </div>
 
+      {/* Novi proizvod */}
       <section className="card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0 }}>➕ Novi proizvod</h3>
         <div className="stack-sm" style={{ marginTop: 8 }}>
@@ -389,6 +421,7 @@ if (files && files.length) {
         </div>
       </section>
 
+      {/* Izbor proizvoda */}
       <div className="stack-sm" style={{ alignItems: 'center', margin: '12px 0' }}>
         <span className="kv" style={{ minWidth: 90 }}>Proizvod:</span>
         <select className="input" value={selId} onChange={e=>{
@@ -406,6 +439,7 @@ if (files && files.length) {
 
       {selectedProduct && (
         <>
+          {/* Status + Progress + Napomena info */}
           <section className="card" style={{ marginBottom: 16 }}>
             <div className="stack-sm" style={{ alignItems:'center', justifyContent:'space-between' }}>
               <div style={{ display:'flex', gap:10, alignItems:'center' }}>
@@ -439,6 +473,7 @@ if (files && files.length) {
             )}
           </section>
 
+          {/* Taskovi */}
           <section className="card" style={{ marginBottom: 16 }}>
             <h3 style={{ marginTop: 0 }}>📋 Koraci (To-Do)</h3>
             <div className="stack-sm" style={{ marginBottom: 8 }}>
@@ -457,6 +492,7 @@ if (files && files.length) {
             </div>
           </section>
 
+          {/* Novi update */}
           <section className="card" style={{ marginBottom: 16 }}>
             <h3 style={{ marginTop: 0 }}>🖊️ Novi korak / update</h3>
             <div className="stack-sm" style={{ margin: '8px 0' }}>
@@ -474,6 +510,7 @@ if (files && files.length) {
             {err && <div style={{ marginTop: 10, color: '#ef4444' }}>{err}</div>}
           </section>
 
+          {/* Pregled i brisanje update-a */}
           <UpdatesList productId={selId} onDelete={deleteUpdate} />
         </>
       )}
