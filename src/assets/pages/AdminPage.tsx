@@ -25,6 +25,29 @@ const fmt = (ts?: any) => { try { return ts?.toDate ? ts.toDate().toLocaleString
 const WATERMARK_URL = '/watermark.png' // public/watermark.png
 
 // helper: resumable upload → vrati downloadURL
+function errText(e:any){
+  if(!e) return 'Nepoznata greška'
+  if(typeof e==='string') return e
+  if(e.message) return e.message
+  try { return JSON.stringify(e) } catch { return String(e) }
+}
+
+/** Promise wrap za uploadBytesResumable → vrati downloadURL */
+function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentType='image/jpeg'): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(r, data, { contentType })
+    task.on('state_changed',
+      // snap => console.log('Upload', Math.round(snap.bytesTransferred/snap.totalBytes*100)+'%'),
+      err => reject(err),
+      async () => {
+        try { resolve(await getDownloadURL(task.snapshot.ref)) }
+        catch(e){ reject(e) }
+      }
+    )
+  })
+}
+
+/** Fallback: samo smanji sliku (kad watermark padne) */
 async function downscaleOnly(file: File, max = 1600, quality = 0.85): Promise<Blob> {
   const img = await new Promise<HTMLImageElement>((res, rej) => {
     const fr = new FileReader()
@@ -38,27 +61,10 @@ async function downscaleOnly(file: File, max = 1600, quality = 0.85): Promise<Bl
     fr.readAsDataURL(file)
   })
   const k = Math.min(max / img.width, max / img.height, 1)
-  const W = Math.round(img.width * k)
-  const H = Math.round(img.height * k)
-  const c = document.createElement('canvas')
-  c.width = W; c.height = H
-  const ctx = c.getContext('2d')!
-  ctx.drawImage(img, 0, 0, W, H)
+  const W = Math.round(img.width * k), H = Math.round(img.height * k)
+  const c = document.createElement('canvas'); c.width = W; c.height = H
+  const ctx = c.getContext('2d')!; ctx.drawImage(img, 0, 0, W, H)
   return await new Promise<Blob>((r)=> c.toBlob(b=>r(b!), 'image/jpeg', quality))
-}
-
-function uploadWithProgress(r: ReturnType<typeof ref>, blob: Blob, contentType='image/jpeg'): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(r, blob, { contentType })
-    task.on('state_changed',
-      // snap => console.log('upload', Math.round(snap.bytesTransferred / snap.totalBytes * 100) + '%'),
-      err => reject(err),
-      async () => {
-        try { resolve(await getDownloadURL(task.snapshot.ref)) }
-        catch (e) { reject(e) }
-      }
-    )
-  })
 }
 
 export default function AdminPage(){
@@ -214,67 +220,70 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
     catch(e:any){ setErr(e?.message || String(e)) }
   }
 
-  async function addUpdate(){
-  setMsg(null); setErr(null); setBusy(true)
-  try{
-    if (!user) throw new Error('Nisi prijavljen.')
-    if (!selId) throw new Error('Izaberi proizvod.') // jedino “obavezno”
-
-    const urls: string[] = []
-
-    if (files && files.length){
-      for (const f of Array.from(files)) {
+  async function addUpdate() {
+  setMsg(null); setErr(null); setBusy(true);
   try {
-    // 1) Watermark sa importovanom slikom (nema CORS)
-    let blob = await applyWatermark(f, watermarkPng, 0.9)
+    if (!user) throw new Error('Nisi prijavljen.');
+    if (!selId) throw new Error('Izaberi proizvod.'); // jedino obavezno
 
-    // 2) Ako je i dalje veliko, dodatno smanji
-    if (blob.size > 3 * 1024 * 1024) {
-      blob = await downscaleOnly(f, 1600, 0.82)
+    const urls: string[] = [];
+
+    if (files && files.length) {
+      for (const f of Array.from(files)) {
+        try {
+          // 1) Watermark sa lokalnim importom (nema CORS) → manji JPEG
+          let blob = await applyWatermark(f, watermarkPng, 0.9);
+
+          // 2) Ako je i dalje veliko, dodatno smanji
+          if (blob.size > 3 * 1024 * 1024) {
+            blob = await downscaleOnly(f, 1600, 0.82);
+          }
+
+          // 3) Putanja i upload (uvek šaljemo BLOB, nikad originalni File)
+          const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
+          const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
+          const r = ref(storage, path);
+
+          const url = await uploadWithProgress(r, blob, 'image/jpeg');
+          urls.push(url);
+
+          console.log('UPLOAD OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024));
+        } catch (e) {
+          console.warn('Watermark fail → downscale-only fallback', e);
+
+          // 4) Nikad ne šaljemo original: makar smanji pa pošalji
+          const blob = await downscaleOnly(f, 1600, 0.82);
+
+          const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
+          const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
+          const r = ref(storage, path);
+
+          const url = await uploadWithProgress(r, blob, 'image/jpeg');
+          urls.push(url);
+
+          console.log('UPLOAD Fallback OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024));
+        }
+      }
     }
 
-    const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-    const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
-    const r = ref(storage, path)
-
-    // 3) UVEK šaljemo BLOB (ne File)
-    const url = await uploadWithProgress(r, blob, 'image/jpeg')
-    urls.push(url)
-
-    console.log('UPLOAD OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024))
-  } catch (e) {
-    console.warn('WM fail → downscale-only fallback', e)
-
-    // Nikad ne šaljemo original; makar smanji:
-    const blob = await downscaleOnly(f, 1600, 0.82)
-
-    const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-    const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
-    const r = ref(storage, path)
-
-    const url = await uploadWithProgress(r, blob, 'image/jpeg')
-    urls.push(url)
-
-    console.log('UPLOAD Fallback OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024))
-  }
-}
-
-    await addDoc(collection(db,'products',selId,'updates'), {
+    // 5) Upis u Firestore (prilagodi tvojim poljima)
+    await addDoc(collection(db, 'products', selId, 'updates'), {
       taskId: selTaskId || '',
       note: note || '',
       images: urls,
       createdAt: serverTimestamp(),
       author: user?.email || user?.uid || 'admin'
-    })
+    });
 
-    setNote(''); setFiles(null)
-    const fin = document.getElementById('files') as HTMLInputElement | null
-    if (fin) fin.value = ''
-    setMsg('Update sačuvan.')
-  }catch(e:any){
-    setErr(errText(e)) // ← više nema [object Object]
-  }finally{
-    setBusy(false)
+    // 6) Reset polja
+    setNote(''); setFiles(null);
+    const fin = document.getElementById('files') as HTMLInputElement | null;
+    if (fin) fin.value = '';
+    setMsg('Update sačuvan.');
+  } catch (e:any) {
+    setErr(errText(e));        // lep tekst umesto [object Object]
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -528,6 +537,7 @@ function UpdatesList({ productId, onDelete }:{productId:string; onDelete:(id:str
     </section>
   )
 }
+
 
 
 
