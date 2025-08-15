@@ -1,4 +1,4 @@
-import watermarkPng from '../../assets/watermark.png'
+// src/assets/pages/AdminPage.tsx
 import { useEffect, useMemo, useState } from 'react'
 import { db, storage, auth } from '../../firebase'
 import {
@@ -13,6 +13,7 @@ import {
   GoogleAuthProvider, setPersistence, browserLocalPersistence, signOut
 } from 'firebase/auth'
 import { applyWatermark } from '../../utils/watermark'
+import watermarkPng from '../../assets/watermark.png'
 
 type Status = 'u_izradi' | 'pauza' | 'zavrseno'
 type Product = { id: string; name?: string; note?: string; status?: Status; createdAt?: any }
@@ -21,10 +22,9 @@ type Update  = { id: string; taskId?: string; note?: string; images?: string[]; 
 
 const ALLOW = ['nadir.celebic1@gmail.com','ljaljakedvin@gmail.com','jasmin.celebic1@gmail.com']
 const provider = new GoogleAuthProvider(); provider.setCustomParameters({ prompt:'select_account' })
-const fmt = (ts?: any) => { try { return ts?.toDate ? ts.toDate().toLocaleString() : '' } catch { return '' } }
-const WATERMARK_URL = '/watermark.png' // public/watermark.png
 
-// helper: resumable upload → vrati downloadURL
+const fmt = (ts?: any) => { try { return ts?.toDate ? ts.toDate().toLocaleString() : '' } catch { return '' } }
+
 function errText(e:any){
   if(!e) return 'Nepoznata greška'
   if(typeof e==='string') return e
@@ -47,7 +47,7 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
   })
 }
 
-/** Fallback: samo smanji sliku (kad watermark padne) */
+/** Fallback: resize bez watermarka (ako watermark padne) */
 async function downscaleOnly(file: File, max = 1600, quality = 0.85): Promise<Blob> {
   const img = await new Promise<HTMLImageElement>((res, rej) => {
     const fr = new FileReader()
@@ -77,7 +77,7 @@ export default function AdminPage(){
   const [products, setProducts] = useState<Product[]>([])
   const [selId, setSelId] = useState<string>('')
 
-  // Meta za selektovani proizvod (polja NEOBAVEZNA)
+  // Meta selektovanog proizvoda (sva polja NEOBAVEZNA)
   const [name, setName] = useState('')
   const [pnote, setPnote] = useState('')
   const [status, setStatus] = useState<Status>('u_izradi')
@@ -86,9 +86,9 @@ export default function AdminPage(){
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskTitle, setTaskTitle] = useState('')
 
-  // Update
+  // Update (unos)
   const [selTaskId, setSelTaskId] = useState<string>('')
-  const [note, setNote] = useState('')  // opis/napomena (neobavezno)
+  const [note, setNote] = useState('')
   const [files, setFiles] = useState<FileList | null>(null)
 
   // UI
@@ -147,27 +147,6 @@ export default function AdminPage(){
     const done = tasks.filter(t=>t.done).length
     return Math.round(done / tasks.length * 100)
   }, [tasks])
-  function errText(e:any){
-  if (!e) return 'Nepoznata greška'
-  if (typeof e === 'string') return e
-  if (e.message) return e.message
-  try { return JSON.stringify(e) } catch { return String(e) }
-}
-
-/** Wrap za uploadBytesResumable – vrati downloadURL kada završi */
-function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentType='image/jpeg'): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(r, data, { contentType })
-    task.on('state_changed',
-      // snap => console.log('Upload', Math.round(snap.bytesTransferred/snap.totalBytes*100)+'%'),
-      err => reject(err),
-      async () => {
-        try { resolve(await getDownloadURL(task.snapshot.ref)) }
-        catch (e) { reject(e) }
-      }
-    )
-  })
-}
 
   // AUTH handlers
   async function login(){
@@ -191,7 +170,7 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
       })
       setName(''); setPnote('')
       setMsg('Proizvod dodat.')
-    }catch(e:any){ setErr(e?.message || String(e)) }
+    }catch(e:any){ setErr(errText(e)) }
   }
   async function saveProdMeta(){
     setMsg(null); setErr(null)
@@ -200,7 +179,7 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
       if (!selectedProduct) throw new Error('Nije izabran proizvod.')
       await updateDoc(doc(db,'products',selectedProduct.id), { name, note: pnote || '', status: status || 'u_izradi' })
       setMsg('Proizvod sačuvan.')
-    }catch(e:any){ setErr(e?.message || String(e)) }
+    }catch(e:any){ setErr(errText(e)) }
   }
   async function addTask(){
     setMsg(null); setErr(null)
@@ -213,80 +192,78 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
       })
       setTaskTitle('')
       setMsg('Korak dodat.')
-    }catch(e:any){ setErr(e?.message || String(e)) }
+    }catch(e:any){ setErr(errText(e)) }
   }
   async function toggleTask(t: Task){
     try { await updateDoc(doc(db,'products',selId,'tasks',t.id), { done: !t.done }) }
-    catch(e:any){ setErr(e?.message || String(e)) }
+    catch(e:any){ setErr(errText(e)) }
   }
 
+  // ⬇️ WATERMARK + RESUMABLE UPLOAD + FIRESTORE UPDATE
   async function addUpdate() {
-  setMsg(null); setErr(null); setBusy(true);
-  try {
-    if (!user) throw new Error('Nisi prijavljen.');
-    if (!selId) throw new Error('Izaberi proizvod.'); // jedino obavezno
+    setMsg(null); setErr(null); setBusy(true);
+    try {
+      if (!user) throw new Error('Nisi prijavljen.');
+      if (!selId) throw new Error('Izaberi proizvod.'); // jedino obavezno
 
-    const urls: string[] = [];
+      const urls: string[] = [];
 
-    if (files && files.length) {
-      for (const f of Array.from(files)) {
-        try {
-          // 1) Watermark sa lokalnim importom (nema CORS) → manji JPEG
-          let blob = await applyWatermark(f, watermarkPng, 0.9);
+      if (files && files.length) {
+        for (const f of Array.from(files)) {
+          try {
+            // 1) Watermark sa lokalnim importom (nema CORS) → manji JPEG
+            let blob = await applyWatermark(f, watermarkPng, 0.9);
 
-          // 2) Ako je i dalje veliko, dodatno smanji
-          if (blob.size > 3 * 1024 * 1024) {
-            blob = await downscaleOnly(f, 1600, 0.82);
+            // 2) Ako je i dalje veliko, dodatno smanji
+            if (blob.size > 3 * 1024 * 1024) {
+              blob = await downscaleOnly(f, 1600, 0.82);
+            }
+
+            // 3) Putanja i resumable upload (uvek šaljemo BLOB, nikad originalni File)
+            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
+            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
+            const r = ref(storage, path);
+
+            const url = await uploadWithProgress(r, blob, 'image/jpeg');
+            urls.push(url);
+
+            // console.log('UPLOAD OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024));
+          } catch (e) {
+            console.warn('Watermark fail → downscale-only fallback', e);
+
+            // 4) Nikad ne šaljemo original: makar smanji pa pošalji
+            const blob = await downscaleOnly(f, 1600, 0.82);
+
+            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
+            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
+            const r = ref(storage, path);
+
+            const url = await uploadWithProgress(r, blob, 'image/jpeg');
+            urls.push(url);
+
+            // console.log('UPLOAD Fallback OK', safe, 'blobKB=', Math.round(blob.size/1024));
           }
-
-          // 3) Putanja i upload (uvek šaljemo BLOB, nikad originalni File)
-          const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
-          const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
-          const r = ref(storage, path);
-
-          const url = await uploadWithProgress(r, blob, 'image/jpeg');
-          urls.push(url);
-
-          console.log('UPLOAD OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024));
-        } catch (e) {
-          console.warn('Watermark fail → downscale-only fallback', e);
-
-          // 4) Nikad ne šaljemo original: makar smanji pa pošalji
-          const blob = await downscaleOnly(f, 1600, 0.82);
-
-          const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
-          const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
-          const r = ref(storage, path);
-
-          const url = await uploadWithProgress(r, blob, 'image/jpeg');
-          urls.push(url);
-
-          console.log('UPLOAD Fallback OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024));
         }
       }
+
+      await addDoc(collection(db, 'products', selId, 'updates'), {
+        taskId: selTaskId || '',
+        note: note || '',
+        images: urls,
+        createdAt: serverTimestamp(),
+        author: user?.email || user?.uid || 'admin'
+      });
+
+      setNote(''); setFiles(null);
+      const fin = document.getElementById('files') as HTMLInputElement | null;
+      if (fin) fin.value = '';
+      setMsg('Update sačuvan.');
+    } catch (e:any) {
+      setErr(errText(e));        // lep tekst umesto [object Object]
+    } finally {
+      setBusy(false);
     }
-
-    // 5) Upis u Firestore (prilagodi tvojim poljima)
-    await addDoc(collection(db, 'products', selId, 'updates'), {
-      taskId: selTaskId || '',
-      note: note || '',
-      images: urls,
-      createdAt: serverTimestamp(),
-      author: user?.email || user?.uid || 'admin'
-    });
-
-    // 6) Reset polja
-    setNote(''); setFiles(null);
-    const fin = document.getElementById('files') as HTMLInputElement | null;
-    if (fin) fin.value = '';
-    setMsg('Update sačuvan.');
-  } catch (e:any) {
-    setErr(errText(e));        // lep tekst umesto [object Object]
-  } finally {
-    setBusy(false);
   }
-}
-
 
   // DELETE – update, task (sa njegovim update-ima), proizvod (kaskadno)
   async function deleteUpdate(updateId: string){
@@ -348,14 +325,14 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
     setSelId('')
   }
 
-  // RENDER
+  // RENDER (stanje)
   if (!user) {
     return (
       <div className="app-wrap">
         <div className="card" style={{ marginBottom: 12 }}>
           <h1>🛡️ Admin</h1>
           <p>Prijavi se Google nalogom.</p>
-          <button className="btn" onClick={login}>Prijava Google</button>
+          <button type="button" className="btn" onClick={login}>Prijava Google</button>
           {authError && <div style={{ marginTop: 10, color: '#ef4444' }}>{authError}</div>}
         </div>
       </div>
@@ -367,7 +344,7 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
         <div className="card">
           <h2>🚫 Zabranjen pristup</h2>
           <p>{user.email} nije na listi administratora.</p>
-          <button className="btn ghost" onClick={logout}>Odjava</button>
+          <button type="button" className="btn ghost" onClick={logout}>Odjava</button>
         </div>
       </div>
     )
@@ -380,7 +357,9 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
     <div className="app-wrap">
       <div className="row" style={{ alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
         <div className="kv">Prijavljen: <b>{user.email || user.uid}</b></div>
-        <button className="btn ghost" onClick={logout}>Odjava</button>
+        <div style={{display:'flex', gap:8, alignItems:'center'}}>
+          <button type="button" className="btn ghost" onClick={logout}>Odjava</button>
+        </div>
       </div>
 
       {/* Novi proizvod */}
@@ -396,9 +375,9 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
         </div>
         <textarea className="input" placeholder="Napomena (neobavezno)" value={pnote} onChange={e=>setPnote(e.target.value)} />
         <div style={{display:'flex',gap:8, marginTop:8, flexWrap:'wrap'}}>
-          <button className="btn" onClick={addProduct}>Dodaj proizvod</button>
-          {selectedProduct && <button className="btn ghost" onClick={saveProdMeta}>Sačuvaj izmene</button>}
-          {selectedProduct && <button className="btn ghost" onClick={deleteProductCascade}>🗑️ Obriši proizvod</button>}
+          <button type="button" className="btn" onClick={addProduct}>Dodaj proizvod</button>
+          {selectedProduct && <button type="button" className="btn ghost" onClick={saveProdMeta}>Sačuvaj izmene</button>}
+          {selectedProduct && <button type="button" className="btn ghost" onClick={deleteProductCascade}>🗑️ Obriši proizvod</button>}
         </div>
       </section>
 
@@ -456,7 +435,7 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
             <h3 style={{ marginTop: 0 }}>📋 Koraci (To-Do)</h3>
             <div className="stack-sm" style={{ marginBottom: 8 }}>
               <input className="input" placeholder="Naziv koraka (neobavezno)" value={taskTitle} onChange={e=>setTaskTitle(e.target.value)} />
-              <button className="btn" onClick={addTask}>Dodaj korak</button>
+              <button type="button" className="btn" onClick={addTask}>Dodaj korak</button>
             </div>
             <div className="grid-auto">
               {tasks.map(t => (
@@ -464,7 +443,7 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
                   <input type="checkbox" checked={t.done} onChange={() => toggleTask(t)} />
                   <div style={{ flex: 1 }}>{t.title || '(bez naziva)'}</div>
                   <span className="kv">{fmt(t.createdAt)}</span>
-                  <button className="btn ghost" onClick={()=>deleteTask(t.id)}>🗑️</button>
+                  <button type="button" className="btn ghost" onClick={()=>deleteTask(t.id)}>🗑️</button>
                 </div>
               ))}
             </div>
@@ -482,7 +461,7 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
             </div>
             <input id="files" type="file" accept="image/*" multiple onChange={e=>setFiles(e.target.files)} />
             <div style={{ marginTop: 10, display:'flex', gap:8, flexWrap:'wrap' }}>
-              <button className="btn" disabled={busy} onClick={addUpdate}>Sačuvaj update</button>
+              <button type="button" className="btn" disabled={busy} onClick={addUpdate}>Sačuvaj update</button>
             </div>
             {msg && <div style={{ marginTop: 10, color: '#22c55e' }}>{msg}</div>}
             {err && <div style={{ marginTop: 10, color: '#ef4444' }}>{err}</div>}
@@ -529,7 +508,7 @@ function UpdatesList({ productId, onDelete }:{productId:string; onDelete:(id:str
               <span>Postavljeno: {fmt(u.createdAt)}</span>
             </div>
             <div style={{marginTop:8}}>
-              <button className="btn ghost" onClick={()=>onDelete(u.id)}>🗑️ Obriši update</button>
+              <button type="button" className="btn ghost" onClick={()=>onDelete(u.id)}>🗑️ Obriši update</button>
             </div>
           </article>
         ))}
@@ -537,8 +516,3 @@ function UpdatesList({ productId, onDelete }:{productId:string; onDelete:(id:str
     </section>
   )
 }
-
-
-
-
-
