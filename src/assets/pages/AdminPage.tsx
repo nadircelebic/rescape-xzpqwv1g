@@ -223,29 +223,41 @@ function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentT
     const urls: string[] = []
 
     if (files && files.length){
-      for (const f of Array.from(files)){
-        try {
-          // 1) Watermark → manji JPEG blob
-          const blob = await applyWatermark(f, '/watermark.png', 0.9)
+      for (const f of Array.from(files)) {
+  try {
+    // 1) Watermark sa importovanom slikom (nema CORS)
+    let blob = await applyWatermark(f, watermarkPng, 0.9)
 
-          // 2) Jedinstveno ime (radi cache-bust)
-          const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-          const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
-          const r = ref(storage, path)
-
-          // 3) Resumable upload i čekamo kraj (promise)
-          const url = await uploadWithProgress(r, blob, 'image/jpeg')
-          urls.push(url)
-        } catch (wmErr) {
-          console.warn('Watermark/upload greška, šaljem original:', wmErr)
-          const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-          const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
-          const r = ref(storage, path)
-          const url = await uploadWithProgress(r, f, (f as any).type || 'application/octet-stream')
-          urls.push(url)
-        }
-      }
+    // 2) Ako je i dalje veliko, dodatno smanji
+    if (blob.size > 3 * 1024 * 1024) {
+      blob = await downscaleOnly(f, 1600, 0.82)
     }
+
+    const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
+    const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
+    const r = ref(storage, path)
+
+    // 3) UVEK šaljemo BLOB (ne File)
+    const url = await uploadWithProgress(r, blob, 'image/jpeg')
+    urls.push(url)
+
+    console.log('UPLOAD OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024))
+  } catch (e) {
+    console.warn('WM fail → downscale-only fallback', e)
+
+    // Nikad ne šaljemo original; makar smanji:
+    const blob = await downscaleOnly(f, 1600, 0.82)
+
+    const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
+    const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
+    const r = ref(storage, path)
+
+    const url = await uploadWithProgress(r, blob, 'image/jpeg')
+    urls.push(url)
+
+    console.log('UPLOAD Fallback OK', safe, 'origKB=', Math.round(f.size/1024), 'blobKB=', Math.round(blob.size/1024))
+  }
+}
 
     await addDoc(collection(db,'products',selId,'updates'), {
       taskId: selTaskId || '',
@@ -516,6 +528,7 @@ function UpdatesList({ productId, onDelete }:{productId:string; onDelete:(id:str
     </section>
   )
 }
+
 
 
 
