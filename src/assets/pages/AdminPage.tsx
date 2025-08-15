@@ -31,6 +31,13 @@ function errText(e:any){
   if(e.message) return e.message
   try { return JSON.stringify(e) } catch { return String(e) }
 }
+function withTimeout<T>(p: Promise<T>, ms = 4000, msg = 'Watermark timeout') {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(msg)), ms)
+    p.then(v => { clearTimeout(t); resolve(v) })
+     .catch(e => { clearTimeout(t); reject(e) })
+  })
+}
 
 /* ---------- Stabilan resumable upload sa hard timeout + inactivity watchdog ---------- */
 const UPLOAD_TIMEOUT_MS = 60_000;    // hard timeout (60s)
@@ -299,34 +306,40 @@ export default function AdminPage(){
       const urls: string[] = []
 
       if (files && files.length) {
-        for (const f of Array.from(files)) {
-          try {
-            // watermark + resize
-            let blob = await applyWatermark(f, watermarkPng, 0.9)
-            if (blob.size > 3 * 1024 * 1024) {
-              blob = await downscaleOnly(f, 1600, 0.82)
-            }
-            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
-            const r = ref(storage, path)
-            const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p))
-            urls.push(url)
-          } catch (e) {
-            // fallback – nikad ne šalji original
-            try {
-              const blob = await downscaleOnly(f, 1600, 0.82)
-              const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-              const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
-              const r = ref(storage, path)
-              const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p))
-              urls.push(url)
-            } catch (e2:any) {
-              setErr(prev => (prev ? prev + '\n' : '') + errText(e2))
-              continue
-            }
-          }
-        }
+  for (const f of Array.from(files)) {
+    // 0) priprema putanje
+    const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
+    const base = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
+    const r = ref(storage, base);
+
+    // 1) pokušaj watermark + resize, ali sa TIMEOUT-om (4s)
+    try {
+      let blob = await withTimeout(applyWatermark(f, watermarkPng, 0.9), 4000, 'Watermark timeout');
+      // ako je i posle watermarka veće od 3MB – dodatno smanji
+      if (blob.size > 3 * 1024 * 1024) {
+        blob = await downscaleOnly(f, 1600, 0.82);
       }
+      const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p));
+      urls.push(url);
+      continue; // sledeći fajl
+    } catch (wmErr:any) {
+      // pad watermarka je OK, idemo na fallback
+      console.warn('Watermark fail → fallback resize:', wmErr?.message || wmErr);
+    }
+
+    // 2) fallback: čisto smanjenje i upload (bez watermarka)
+    try {
+      const blob = await downscaleOnly(f, 1600, 0.82);
+      const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p));
+      urls.push(url);
+    } catch (e2:any) {
+      // 3) ako i ovo padne – prijavi ali NE KOČI ceo update (nastavi na sledeći fajl)
+      setErr(prev => (prev ? prev + '\n' : '') + (e2?.message || String(e2)));
+      continue;
+    }
+  }
+}
+
 
       await addDoc(collection(db, 'products', selId, 'updates'), {
         taskId: selTaskId || '',
