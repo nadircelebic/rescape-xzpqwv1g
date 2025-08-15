@@ -217,30 +217,45 @@ export default function AdminPage(){
       if (!user) throw new Error('Nisi prijavljen.')
       if (!selId) throw new Error('Izaberi proizvod.')
 
-      const urls: string[] = []
+      const urls: string[] = [];
 
-      if (files && files.length) {
-        for (const f of Array.from(files)) {
-          try {
-            let blob = await applyWatermark(f, watermarkPng, 0.9)
-            if (blob.size > 3 * 1024 * 1024) {
-              blob = await downscaleOnly(f, 1600, 0.82)
-            }
-            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
-            const r = ref(storage, path)
-            const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p))
-            urls.push(url)
-          } catch (e) {
-            const blob = await downscaleOnly(f, 1600, 0.82)
-            const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
-            const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
-            const r = ref(storage, path)
-            const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p))
-            urls.push(url)
-          }
-        }
+if (files && files.length) {
+  for (const f of Array.from(files)) {
+    // koristimo "continue" umesto da celokupni update visi
+    try {
+      // 1) watermark + resize
+      let blob = await applyWatermark(f, watermarkPng, 0.9);
+      if (blob.size > 3 * 1024 * 1024) {
+        blob = await downscaleOnly(f, 1600, 0.82);
       }
+
+      // 2) putanja
+      const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
+      const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
+      const r = ref(storage, path);
+
+      // 3) resumable upload + progress (bez setErr u progressu)
+      const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p));
+      urls.push(url);
+    } catch (e) {
+      // Fallback: probaj čisto smanjenje + upload
+      try {
+        const blob = await downscaleOnly(f, 1600, 0.82);
+        const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'');
+        const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`;
+        const r = ref(storage, path);
+        const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p));
+        urls.push(url);
+      } catch (e2) {
+        // Ako i to padne — zabeleži, ali NEMOJ da blokira ceo update
+        console.warn('Upload preskočen zbog greške:', e2);
+        setErr(prev => (prev ? prev + '\n' : '') + (e2 as any)?.message ?? String(e2));
+        continue;
+      }
+    }
+  }
+}
+
 
       await addDoc(collection(db, 'products', selId, 'updates'), {
         taskId: selTaskId || '',
