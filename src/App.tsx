@@ -3,6 +3,7 @@ import { HashRouter as Router, Routes, Route, Navigate, Link } from 'react-route
 import PublicView from './assets/pages/PublicView'
 import AdminPage from './assets/pages/AdminPage'
 import './styles.css'
+import brand from './assets/logo.png'   // ⬅️ Uvoz logotipa iz src/assets
 
 export default function App() {
   return (
@@ -11,11 +12,11 @@ export default function App() {
       <div className="app-nav">
         <div className="nav-left">
           {/* Glavni logo levo */}
-          <img src="/logo.png" alt="Logo" className="logo" />
+          <img src={brand} alt="Logo" className="logo" />
 
           {/* Link sa malim logoom pored teksta */}
           <Link className="app-link with-icon" to="/view">
-            <img src="/logo.png" alt="" className="link-icon" />
+            <img src={brand} alt="" className="link-icon" />
             <span>Javni prikaz</span>
           </Link>
 
@@ -27,7 +28,7 @@ export default function App() {
         <div
           className="nav-bg-logo"
           aria-hidden="true"
-          style={{ backgroundImage: 'url(/logo.png)' }}
+          style={{ backgroundImage: `url(${brand})` }}  // ⬅️ ovde takođe koristimo import
         />
       </div>
 
