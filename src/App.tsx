@@ -7,11 +7,20 @@ export default function App() {
     <Router>
       <div className="app-nav">
         <div className="nav-left">
+          {/* glavni logo levo */}
           <img src="/logo.png" alt="Logo" className="logo" />
-          <Link className="app-link" to="/view">👁️ Javni prikaz</Link>
+          {/* link sa malim logom pored teksta */}
+          <Link className="app-link with-icon" to="/view">
+            <img src="/logo.png" alt="" className="link-icon" />
+            <span>Javni prikaz</span>
+          </Link>
           <Link className="app-link" to="/admin">🛡️ Admin</Link>
         </div>
+
+        {/* blago vidljiv logo u vrhu (watermark u headeru) */}
+        <div className="nav-bg-logo" aria-hidden="true" />
       </div>
+
       <Routes>
         <Route path="/admin" element={<AdminPage />} />
         <Route path="/view" element={<PublicView />} />
