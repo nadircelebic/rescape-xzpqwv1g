@@ -1,4 +1,3 @@
-// src/assets/pages/AdminPage.tsx
 import { useEffect, useMemo, useState } from 'react'
 import { db, storage, auth } from '../../firebase'
 import {
@@ -32,7 +31,7 @@ function errText(e:any){
   try { return JSON.stringify(e) } catch { return String(e) }
 }
 
-/** ČIST helper: resumable upload → vrati downloadURL (bez setErr u progress-u) */
+const UPLOAD_TIMEOUT_MS = 60_000
 function uploadWithProgress(
   r: ReturnType<typeof ref>,
   data: Blob | File,
@@ -41,17 +40,23 @@ function uploadWithProgress(
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const task = uploadBytesResumable(r, data, { contentType })
-    task.on(
-      'state_changed',
+    let timedOut = false
+    const to = setTimeout(() => {
+      timedOut = true
+      try { task.cancel() } catch {}
+      reject(new Error('Upload timeout (60s). Provjeri mrežu / ad-block / proxy.'))
+    }, UPLOAD_TIMEOUT_MS)
+
+    task.on('state_changed',
       (snap) => {
+        if (timedOut) return
         if (onProgress && snap.totalBytes > 0) {
-          const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100)
-          onProgress(pct)
+          onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100))
         }
-        // NEMA setErr ovde — ovo je samo progress!
       },
-      (err) => reject(err),
+      (err) => { clearTimeout(to); reject(err) },
       async () => {
+        clearTimeout(to)
         try { resolve(await getDownloadURL(task.snapshot.ref)) }
         catch (e) { reject(e) }
       }
@@ -59,7 +64,6 @@ function uploadWithProgress(
   })
 }
 
-/** Fallback: resize bez watermarka (ako watermark padne) */
 async function downscaleOnly(file: File, max = 1600, quality = 0.85): Promise<Blob> {
   const img = await new Promise<HTMLImageElement>((res, rej) => {
     const fr = new FileReader()
@@ -89,7 +93,7 @@ export default function AdminPage(){
   const [products, setProducts] = useState<Product[]>([])
   const [selId, setSelId] = useState<string>('')
 
-  // Meta selektovanog proizvoda (sva polja NEOBAVEZNA)
+  // Meta za selektovani proizvod
   const [name, setName] = useState('')
   const [pnote, setPnote] = useState('')
   const [status, setStatus] = useState<Status>('u_izradi')
@@ -98,7 +102,7 @@ export default function AdminPage(){
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskTitle, setTaskTitle] = useState('')
 
-  // Update (unos)
+  // Update
   const [selTaskId, setSelTaskId] = useState<string>('')
   const [note, setNote] = useState('')
   const [files, setFiles] = useState<FileList | null>(null)
@@ -109,7 +113,6 @@ export default function AdminPage(){
   const [err, setErr] = useState<string|null>(null)
   const [pct, setPct] = useState<number>(0)
 
-  // AUTH lifecycle
   useEffect(()=>{
     setPersistence(auth, browserLocalPersistence).catch(()=>{})
     getRedirectResult(auth).catch(()=>{})
@@ -126,7 +129,6 @@ export default function AdminPage(){
     return ()=>unsub()
   },[])
 
-  // Proizvodi
   useEffect(()=>{
     const q = query(collection(db,'products'), orderBy('createdAt','desc'))
     const unsub = onSnapshot(q, snap=>{
@@ -142,7 +144,6 @@ export default function AdminPage(){
     return ()=>unsub()
   }, [selId])
 
-  // Taskovi
   useEffect(()=>{
     if (!selId){ setTasks([]); setSelTaskId(''); return }
     const tq = query(collection(db,'products',selId,'tasks'), orderBy('order','asc'))
@@ -161,7 +162,6 @@ export default function AdminPage(){
     return Math.round(done / tasks.length * 100)
   }, [tasks])
 
-  // AUTH handlers
   async function login(){
     setAuthError(null)
     try { await signInWithPopup(auth, provider) }
@@ -172,7 +172,6 @@ export default function AdminPage(){
   }
   async function logout(){ await signOut(auth) }
 
-  // CRUD — polja NE moraju biti popunjena
   async function addProduct(){
     setMsg(null); setErr(null)
     try{
@@ -212,12 +211,11 @@ export default function AdminPage(){
     catch(e:any){ setErr(errText(e)) }
   }
 
-  // WATERMARK + RESUMABLE UPLOAD + FIRESTORE
   async function addUpdate() {
     setMsg(null); setErr(null); setBusy(true); setPct(0)
     try {
       if (!user) throw new Error('Nisi prijavljen.')
-      if (!selId) throw new Error('Izaberi proizvod.') // jedino obavezno
+      if (!selId) throw new Error('Izaberi proizvod.')
 
       const urls: string[] = []
 
@@ -231,12 +229,9 @@ export default function AdminPage(){
             const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
             const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
             const r = ref(storage, path)
-
-            // bez setErr u progressu:
             const url = await uploadWithProgress(r, blob, 'image/jpeg', (p)=> setPct(p))
             urls.push(url)
           } catch (e) {
-            // fallback: nikad ne šalji original, smanji pa pošalji
             const blob = await downscaleOnly(f, 1600, 0.82)
             const safe = f.name.replace(/\s+/g,'_').replace(/[^\w.\-]/g,'')
             const path = `uploads/${selId}/${selTaskId || 'no-task'}/${Date.now()}_${safe}`
@@ -266,7 +261,6 @@ export default function AdminPage(){
     }
   }
 
-  // DELETE – update, task (sa njegovim update-ima), proizvod (kaskadno)
   async function deleteUpdate(updateId: string){
     if (!selId) return
     if (!confirm('Obrisati ovaj update?')) return
@@ -326,7 +320,6 @@ export default function AdminPage(){
     setSelId('')
   }
 
-  // RENDER (stanje)
   if (!user) {
     return (
       <div className="app-wrap">
@@ -363,7 +356,6 @@ export default function AdminPage(){
         </div>
       </div>
 
-      {/* Novi proizvod */}
       <section className="card" style={{ marginBottom: 16 }}>
         <h3 style={{ marginTop: 0 }}>➕ Novi proizvod</h3>
         <div className="stack-sm" style={{ marginTop: 8 }}>
@@ -382,7 +374,6 @@ export default function AdminPage(){
         </div>
       </section>
 
-      {/* Izbor proizvoda */}
       <div className="stack-sm" style={{ alignItems: 'center', margin: '12px 0' }}>
         <span className="kv" style={{ minWidth: 90 }}>Proizvod:</span>
         <select className="input" value={selId} onChange={e=>{
@@ -400,7 +391,6 @@ export default function AdminPage(){
 
       {selectedProduct && (
         <>
-          {/* Status + Progress + Napomena info */}
           <section className="card" style={{ marginBottom: 16 }}>
             <div className="stack-sm" style={{ alignItems:'center', justifyContent:'space-between' }}>
               <div style={{ display:'flex', gap:10, alignItems:'center' }}>
@@ -434,7 +424,6 @@ export default function AdminPage(){
             )}
           </section>
 
-          {/* Taskovi */}
           <section className="card" style={{ marginBottom: 16 }}>
             <h3 style={{ marginTop: 0 }}>📋 Koraci (To-Do)</h3>
             <div className="stack-sm" style={{ marginBottom: 8 }}>
@@ -453,7 +442,6 @@ export default function AdminPage(){
             </div>
           </section>
 
-          {/* Novi update */}
           <section className="card" style={{ marginBottom: 16 }}>
             <h3 style={{ marginTop: 0 }}>🖊️ Novi korak / update</h3>
             <div className="stack-sm" style={{ margin: '8px 0' }}>
@@ -471,7 +459,6 @@ export default function AdminPage(){
             {err && <div style={{ marginTop: 10, color: '#ef4444' }}>{err}</div>}
           </section>
 
-          {/* Pregled i brisanje update-a */}
           <UpdatesList productId={selId} onDelete={deleteUpdate} />
         </>
       )}
