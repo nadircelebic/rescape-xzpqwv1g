@@ -25,6 +25,28 @@ const fmt = (ts?: any) => { try { return ts?.toDate ? ts.toDate().toLocaleString
 const WATERMARK_URL = '/watermark.png' // public/watermark.png
 
 // helper: resumable upload → vrati downloadURL
+async function downscaleOnly(file: File, max = 1600, quality = 0.85): Promise<Blob> {
+  const img = await new Promise<HTMLImageElement>((res, rej) => {
+    const fr = new FileReader()
+    fr.onload = () => {
+      const i = new Image()
+      i.onload = () => res(i)
+      i.onerror = rej
+      i.src = fr.result as string
+    }
+    fr.onerror = rej
+    fr.readAsDataURL(file)
+  })
+  const k = Math.min(max / img.width, max / img.height, 1)
+  const W = Math.round(img.width * k)
+  const H = Math.round(img.height * k)
+  const c = document.createElement('canvas')
+  c.width = W; c.height = H
+  const ctx = c.getContext('2d')!
+  ctx.drawImage(img, 0, 0, W, H)
+  return await new Promise<Blob>((r)=> c.toBlob(b=>r(b!), 'image/jpeg', quality))
+}
+
 function uploadWithProgress(r: ReturnType<typeof ref>, blob: Blob, contentType='image/jpeg'): Promise<string> {
   return new Promise((resolve, reject) => {
     const task = uploadBytesResumable(r, blob, { contentType })
@@ -494,5 +516,6 @@ function UpdatesList({ productId, onDelete }:{productId:string; onDelete:(id:str
     </section>
   )
 }
+
 
 
