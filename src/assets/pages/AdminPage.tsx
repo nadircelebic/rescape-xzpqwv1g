@@ -115,6 +115,7 @@ async function downscaleOnly(file: File, max = 1600, quality = 0.85): Promise<Bl
 }
 
 /* ---------- Dijagnostika: 1 KB test upload direktno u Storage ---------- */
+/* ---------- Dijagnostika: 1 KB test upload direktno u Storage (FIXED) ---------- */
 async function testUploadTiny(
   storageInst: typeof storage,
   setMsg: (s:string|null)=>void,
@@ -129,24 +130,31 @@ async function testUploadTiny(
 
     const url = await new Promise<string>((resolve, reject) => {
       const task = uploadBytesResumable(r, blob, { contentType: 'text/plain' });
-      const to = setTimeout(()=>{ try{task.cancel()}catch{}; reject(new Error('Diag timeout 15s')); }, 15_000);
-      task.on('state_changed',
-        // progress ignore
-        err => { clearTimeout(to); reject(err) },
+
+      // 15s hard-timeout za dijagnostiku
+      const to = setTimeout(() => { try{task.cancel()}catch{}; reject(new Error('Diag timeout 15s')); }, 15_000);
+
+      task.on(
+        'state_changed',
+        () => { /* ignore progress */ },
+        (err) => { clearTimeout(to); reject(err); },
         async () => {
           clearTimeout(to);
           try { resolve(await getDownloadURL(task.snapshot.ref)); }
           catch (e) { reject(e); }
         }
-      )
+      );
     });
 
     setMsg('✅ Test upload OK. URL: ' + url);
   }catch(e:any){
-    const code = e?.code ? ` (${e.code})` : '';
-    setErr(`❌ Test upload FAIL${code}: ` + (e?.message || String(e)));
+    // prikaži smislen tekst (nema više [object Object])
+    const text = e?.code ? `${e.code}: ${e?.message || ''}` : (e?.message || String(e));
+    setErr('❌ Test upload FAIL: ' + text);
+    console.error('TEST UPLOAD ERROR:', e);
   }
 }
+
 
 export default function AdminPage(){
   // AUTH
