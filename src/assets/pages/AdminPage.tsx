@@ -33,18 +33,33 @@ function errText(e:any){
 }
 
 /** Promise wrap za uploadBytesResumable → vrati downloadURL */
-function uploadWithProgress(r: ReturnType<typeof ref>, data: Blob|File, contentType='image/jpeg'): Promise<string> {
+function uploadWithProgress(
+  r: ReturnType<typeof ref>,
+  data: Blob | File,
+  contentType = 'image/jpeg',
+  onProgress?: (pct: number) => void
+): Promise<string> {
   return new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(r, data, { contentType })
-    task.on('state_changed',
-      // snap => console.log('Upload', Math.round(snap.bytesTransferred/snap.totalBytes*100)+'%'),
+    const task = uploadBytesResumable(r, data, { contentType });
+    task.on(
+      'state_changed',
+      snap => {
+        if (onProgress && snap.totalBytes > 0) {
+          onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100));
+        }
+        // VAŽNO: NEMA setErr ovde – ovo NIJE greška, samo progress!
+      },
       err => reject(err),
       async () => {
-        try { resolve(await getDownloadURL(task.snapshot.ref)) }
-        catch(e){ reject(e) }
+        try {
+          const url = await getDownloadURL(task.snapshot.ref);
+          resolve(url);
+        } catch (e) {
+          reject(e);
+        }
       }
-    )
-  })
+    );
+  });
 }
 
 /** Fallback: resize bez watermarka (ako watermark padne) */
