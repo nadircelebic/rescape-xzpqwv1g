@@ -1,34 +1,48 @@
-import React from 'react';
-import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import PublicView from './assets/pages/PublicView';
-import AdminPage from './assets/pages/AdminPage';
-import './styles.css';
+// src/App.tsx
+import { HashRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom'
+import PublicView from './assets/pages/PublicView'
+import AdminPage from './assets/pages/AdminPage'
+import './styles.css'
 
 export default function App() {
   return (
     <Router>
-      <div className="app-container">
+      {/* Gornja navigacija sa logoom i linkovima */}
+      <div className="app-nav">
+        <div className="nav-left">
+          {/* Glavni logo levo */}
+          <img src="/logo.png" alt="Logo" className="logo" />
 
-        {/* Logo u vrhu (iz public/logo.png) */}
-        <header className="app-header">
-          <img src="/logo.png" alt="Logo" className="site-logo" />
-        </header>
+          {/* Link sa malim logoom pored teksta */}
+          <Link className="app-link with-icon" to="/view">
+            <img src="/logo.png" alt="" className="link-icon" />
+            <span>Javni prikaz</span>
+          </Link>
 
-        {/* Rute */}
-        <main className="app-main">
-          <Routes>
-            <Route path="/view" element={<PublicView />} />
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="/" element={<Navigate to="/view" replace />} />
-            <Route path="*" element={<div className="app-wrap">404 — idi na /#/view</div>} />
-          </Routes>
-        </main>
+          {/* Admin link */}
+          <Link className="app-link" to="/admin">🛡️ Admin</Link>
+        </div>
 
-        {/* Footer autor – prikazuje se na svakoj stranici */}
-        <footer className="page-footer">
-          © 2025 Nadir Čelebić. Sva prava zadržana.
-        </footer>
+        {/* Blago vidljiv logo u headeru (desno) */}
+        <div
+          className="nav-bg-logo"
+          aria-hidden="true"
+          style={{ backgroundImage: 'url(/logo.png)' }}
+        />
       </div>
+
+      {/* Rute */}
+      <Routes>
+        <Route path="/view" element={<PublicView />} />
+        <Route path="/admin" element={<AdminPage />} />
+        <Route path="/" element={<Navigate to="/view" replace />} />
+        <Route path="*" element={<div className="app-wrap">404 — idi na <Link to="/view">/view</Link></div>} />
+      </Routes>
+
+      {/* Footer sa autorom na svakoj stranici */}
+      <footer className="page-footer">
+        © 2025 Nadir Čelebić. Sva prava zadržana.
+      </footer>
     </Router>
-  );
+  )
 }
