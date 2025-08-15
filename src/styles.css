@@ -1,37 +1,153 @@
-:root { --bg:#0b1020; --card:#0f172a; --txt:#e5e7eb; --mut:#94a3b8; --acc:#3b82f6; --ok:#22c55e; --err:#ef4444; --line:#1f2937; }
-* { box-sizing: border-box; }
-body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--txt); }
+:root {
+  --bg:#0b1020;
+  --card:#0f172a;
+  --txt:#e5e7eb;
+  --mut:#94a3b8;
+  --acc:#3b82f6;
+  --ok:#22c55e;
+  --err:#ef4444;
+  --line:#1f2937;
+}
 
-.app-nav { display:flex; align-items:center; gap:12px; padding:10px 14px; border-bottom:1px solid var(--line); position:sticky; top:0; background:rgba(11,16,32,.85); backdrop-filter: blur(8px); }
-.nav-left { display:flex; align-items:center; gap:12px; }
-.logo { height:28px; width:auto; display:block; }
+* { box-sizing: border-box; }
+body {
+  margin:0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background:var(--bg);
+  color:var(--txt);
+}
+
+/* ---------- NAV / HEADER ---------- */
+.app-nav {
+  position: sticky;
+  top: 0;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:10px 14px;
+  border-bottom:1px solid var(--line);
+  background:rgba(11,16,32,.85);
+  backdrop-filter: blur(8px);
+  /* za pozicioniranje watermark logotipa ispod linkova */
+  position: sticky;
+}
+.nav-left { display:flex; align-items:center; gap:12px; position: relative; z-index: 1; }
+
+.logo { height:28px; width:auto; display:block; opacity:0.95; }
+
 .app-link { color:var(--txt); text-decoration:none; padding:6px 10px; border-radius:8px; }
 .app-link:hover { background:#0b1228; }
 
+/* mali logo u linku “Javni prikaz” */
+.app-link.with-icon { display:flex; align-items:center; gap:6px; }
+.link-icon { height:18px; width:auto; display:block; opacity:0.85; }
+
+/* blago vidljiv logo (header watermark) – desno u vrhu */
+.nav-bg-logo {
+  position: absolute;
+  right: 10px; top: 6px;
+  width: 120px; height: 40px;
+  background: url('/logo.png') no-repeat center / contain;
+  opacity: 0.08;            /* “malo vidljiv” */
+  filter: grayscale(100%);  /* diskretno */
+  pointer-events: none;     /* da ne smeta klikovima */
+  z-index: 0;               /* ispod linkova */
+}
+
+/* Ako želiš ga centriranog umesto desno, koristi ovo umesto right/top:
+   left: 50%; transform: translateX(-50%); top: 6px; right: auto;
+*/
+
+/* ---------- LAYOUT / KARTICE ---------- */
 .app-wrap { max-width:980px; margin:20px auto; padding:0 14px; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; box-shadow: 0 6px 16px rgba(0,0,0,.15); }
-.input { width:100%; background:#0b1228; color:var(--txt); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
-.btn { background:var(--acc); color:white; border:none; border-radius:10px; padding:10px 14px; cursor:pointer; }
-.btn:disabled { opacity:.6; cursor:not-allowed; }
-.btn.ghost { background:transparent; border:1px solid var(--line); }
-.stack-sm { display:flex; gap:8px; flex-wrap:wrap; }
+
+.card {
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:14px;
+  box-shadow: 0 6px 16px rgba(0,0,0,.15);
+}
+
 .row { display:flex; gap:8px; flex-wrap:wrap; }
+.stack-sm { display:flex; gap:8px; flex-wrap:wrap; }
 .kv { color:var(--mut); }
 
-.badge { border-radius:999px; padding:6px 10px; font-size:12px; border:1px solid var(--line); background:#0b1228; }
-.badge.dot::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:#94a3b8; vertical-align:baseline; }
+/* ---------- FORME I DUGMAD ---------- */
+.input {
+  width:100%;
+  background:#0b1228;
+  color:var(--txt);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+}
+textarea.input { min-height:90px; resize:vertical; }
+
+.btn {
+  background:var(--acc);
+  color:white;
+  border:none;
+  border-radius:10px;
+  padding:10px 14px;
+  cursor:pointer;
+}
+.btn:disabled { opacity:.6; cursor:not-allowed; }
+.btn.ghost { background:transparent; border:1px solid var(--line); }
+
+/* ---------- BADGE / STATUS ---------- */
+.badge {
+  border-radius:999px;
+  padding:6px 10px;
+  font-size:12px;
+  border:1px solid var(--line);
+  background:#0b1228;
+}
+.badge.dot::before {
+  content:'';
+  display:inline-block; width:8px; height:8px; border-radius:50%;
+  margin-right:6px; background:#94a3b8; vertical-align:baseline;
+}
 .badge.u_izradi::before { background:#3b82f6; }
-.badge.pauza::before { background:#f59e0b; }
+.badge.pauza::before    { background:#f59e0b; }
 .badge.zavrseno::before { background:#22c55e; }
 
-.progress { height:10px; background:#0b1228; border:1px solid var(--line); border-radius:999px; overflow:hidden; }
-.progress > div { height:100%; background:linear-gradient(90deg, #3b82f6, #22c55e); }
+/* ---------- PROGRES BAR ---------- */
+.progress {
+  height:10px;
+  background:#0b1228;
+  border:1px solid var(--line);
+  border-radius:999px;
+  overflow:hidden;
+}
+.progress > div {
+  height:100%;
+  background:linear-gradient(90deg, #3b82f6, #22c55e);
+}
 
+/* ---------- LISTE / GRID ---------- */
 .grid-auto { display:grid; gap:8px; grid-template-columns: 1fr; }
 @media (min-width: 720px){ .grid-auto { grid-template-columns: 1fr 1fr; } }
 
-.task { display:flex; align-items:center; gap:10px; padding:10px; border:1px solid var(--line); border-radius:10px; background:#0b1228; }
-.task.done { opacity:.8; }
-.gallery { display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:8px; }
-.img { width:100%; height:120px; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
+.task {
+  display:flex; align-items:center; gap:10px;
+  padding:10px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:#0b1228;
+}
+.task.done { opacity:.85; }
+
+/* ---------- GALERIJA ---------- */
+.gallery {
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap:8px;
+}
+.img {
+  width:100%; height:120px; object-fit:cover;
+  border-radius:8px; border:1px solid var(--line);
+}
+
+/* ---------- PRAZNA STANJA ---------- */
 .empty { color:var(--mut); padding:8px 0; }
