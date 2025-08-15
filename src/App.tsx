@@ -1,15 +1,15 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import PublicView from './assets/pages/PublicView';
 import AdminPage from './assets/pages/AdminPage';
 import './styles.css';
 
-function App() {
+export default function App() {
   return (
     <Router>
       <div className="app-container">
 
-        {/* Logo u vrhu */}
+        {/* Logo u vrhu (iz public/logo.png) */}
         <header className="app-header">
           <img src="/logo.png" alt="Logo" className="site-logo" />
         </header>
@@ -17,12 +17,14 @@ function App() {
         {/* Rute */}
         <main className="app-main">
           <Routes>
-            <Route path="/" element={<PublicView />} />
+            <Route path="/view" element={<PublicView />} />
             <Route path="/admin" element={<AdminPage />} />
+            <Route path="/" element={<Navigate to="/view" replace />} />
+            <Route path="*" element={<div className="app-wrap">404 — idi na /#/view</div>} />
           </Routes>
         </main>
 
-        {/* Footer autor */}
+        {/* Footer autor – prikazuje se na svakoj stranici */}
         <footer className="page-footer">
           © 2025 Nadir Čelebić. Sva prava zadržana.
         </footer>
@@ -30,5 +32,3 @@ function App() {
     </Router>
   );
 }
-
-export default App;
