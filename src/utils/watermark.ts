@@ -47,10 +47,22 @@ function readAsImage(file: File): Promise<HTMLImageElement> {
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => resolve(img)
-    img.onerror = reject
-    img.src = src
-  })
+    const img = new Image();
+
+    // Ako je logo sa ISTOG domena (npr. /assets/… ili apsolutni isti origin),
+    // ne diramo crossOrigin (da izbegnemo CORS komplikacije).
+    try {
+      const isData = src.startsWith('data:');
+      const isRoot = src.startsWith('/');
+      const isSameOrigin = isRoot || src.startsWith(window.location.origin);
+      if (!isData && !isSameOrigin) {
+        img.crossOrigin = 'anonymous';
+      }
+    } catch { /* ignore */ }
+
+    img.onload = () => resolve(img);
+    img.onerror = (e) => reject(e);
+    img.src = src;
+  });
 }
+
