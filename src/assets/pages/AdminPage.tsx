@@ -1,3 +1,4 @@
+import watermarkPng from '../../assets/watermark.png'
 import { useEffect, useMemo, useState } from 'react'
 import { db, storage, auth } from '../../firebase'
 import {
@@ -493,4 +494,5 @@ function UpdatesList({ productId, onDelete }:{productId:string; onDelete:(id:str
     </section>
   )
 }
+
 
